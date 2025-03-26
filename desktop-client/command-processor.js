@@ -295,6 +295,56 @@ class CommandProcessor {
       icon: path.join(__dirname, "icon.png"),
     });
   }
+
+  // Research a topic using Perplexity API
+  async research_topic(params) {
+    const { topic, saveResults = true } = params;
+
+    try {
+      const { getAIProvider } = require("./ai-providers");
+      const perplexityProvider = getAIProvider("perplexity");
+
+      // Send the research query to Perplexity
+      const response = await perplexityProvider.researchTopic(topic);
+
+      if (!response.success) {
+        throw new Error(response.text);
+      }
+
+      const researchContent = response.text;
+
+      // Create a sanitized filename
+      const filename = `research_${topic
+        .replace(/[^a-z0-9]/gi, "_")
+        .toLowerCase()}_${Date.now()}.md`;
+      const filePath = path.join(this.workspaceDir, filename);
+
+      // Save the research results to a file
+      if (saveResults) {
+        const content = `# Research: ${topic}\n\n_Conducted on ${new Date().toLocaleString()}_\n\n${researchContent}`;
+        await fs.writeFile(filePath, content);
+      }
+
+      this.showNotification(
+        "AI Assistant",
+        `Completed research on: ${topic}${
+          filePath ? `\nResults saved to: ${filePath}` : ""
+        }`
+      );
+
+      return {
+        success: true,
+        filePath,
+        message: `Research completed on "${topic}"${
+          filePath ? `. Results saved to ${filePath}` : ""
+        }`,
+        researchContent,
+      };
+    } catch (error) {
+      console.error("Error researching topic:", error);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 module.exports = CommandProcessor;

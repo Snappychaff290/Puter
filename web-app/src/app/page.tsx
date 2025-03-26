@@ -8,9 +8,11 @@ import {
   FileText,
   ExternalLink,
   Loader2,
+  Search,
+  Lightbulb,
 } from "lucide-react";
 
-type AIProvider = "gemini" | "ollama";
+type AIProvider = "gemini" | "ollama" | "perplexity";
 type Message = {
   role: "user" | "assistant";
   content: string;
@@ -31,6 +33,8 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
+  const [isResearching, setIsResearching] = useState(false);
+  const [isResearchMode, setIsResearchMode] = useState(false);
 
   const webSocketRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -89,6 +93,17 @@ export default function Home() {
             setMessages((prev) => [...prev, message]);
             setIsLoading(false);
             setShowWelcome(false);
+          } else if (data.type === "research_completed") {
+            const message = {
+              role: "assistant",
+              content: data.message,
+              timestamp: new Date().toISOString(),
+              fileDetails: data.fileDetails,
+            };
+            setMessages((prev) => [...prev, message]);
+            setIsLoading(false);
+            setIsResearching(false);
+            setShowWelcome(false);
           } else if (data.type === "error") {
             setMessages((prev) => [
               ...prev,
@@ -99,6 +114,7 @@ export default function Home() {
               },
             ]);
             setIsLoading(false);
+            setIsResearching(false);
           }
         } catch (error) {
           console.error("Error parsing message:", error);
@@ -197,13 +213,25 @@ export default function Home() {
       webSocketRef.current &&
       webSocketRef.current.readyState === WebSocket.OPEN
     ) {
-      webSocketRef.current.send(
-        JSON.stringify({
-          type: "chat",
-          message: prompt,
-          provider: provider,
-        })
-      );
+      if (isResearchMode) {
+        // Send as research request
+        setIsResearching(true);
+        webSocketRef.current.send(
+          JSON.stringify({
+            type: "research",
+            topic: prompt,
+          })
+        );
+      } else {
+        // Send as regular chat request
+        webSocketRef.current.send(
+          JSON.stringify({
+            type: "chat",
+            message: prompt,
+            provider: provider,
+          })
+        );
+      }
     } else {
       setMessages((prev) => [
         ...prev,
@@ -215,6 +243,7 @@ export default function Home() {
         },
       ]);
       setIsLoading(false);
+      setIsResearching(false);
     }
 
     setPrompt("");
@@ -238,6 +267,10 @@ export default function Home() {
     setPrompt(promptText);
   };
 
+  const toggleResearchMode = () => {
+    setIsResearchMode(!isResearchMode);
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-3xl flex flex-col bg-white dark:bg-slate-800 rounded-xl shadow-2xl overflow-hidden h-[90vh]">
@@ -259,11 +292,16 @@ export default function Home() {
               <select
                 value={provider}
                 onChange={(e) => setProvider(e.target.value as AIProvider)}
-                className="bg-white/20 border border-white/30 text-white rounded-md px-2 py-1 text-sm"
-                disabled={!isConnected}
+                className={`border border-white/30 rounded-md px-2 py-1 text-sm ${
+                  isResearchMode
+                    ? "bg-purple-500/50 text-white/70"
+                    : "bg-white/20 text-white"
+                }`}
+                disabled={!isConnected || isResearchMode}
               >
                 <option value="gemini">Google Gemini</option>
                 <option value="ollama">Ollama</option>
+                <option value="perplexity">Perplexity</option>
               </select>
             </div>
           </div>
@@ -356,16 +394,16 @@ export default function Home() {
                 <button
                   onClick={() =>
                     setExamplePrompt(
-                      "Draft an email to the development team about the new features"
+                      "Research the latest advancements in quantum computing"
                     )
                   }
                   className="bg-white dark:bg-slate-800 p-4 rounded-lg shadow-md border border-slate-200 dark:border-slate-600 hover:border-blue-300 dark:hover:border-blue-500 text-left transition-all duration-200"
                 >
                   <p className="font-medium text-slate-800 dark:text-white">
-                    ✉️ Draft Email
+                    🔍 Research Topic
                   </p>
                   <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                    To development team about new features
+                    Latest advancements in quantum computing
                   </p>
                 </button>
               </div>
@@ -440,7 +478,7 @@ export default function Home() {
                       ></div>
                     </div>
                     <span className="text-sm text-slate-500 dark:text-slate-400">
-                      Thinking...
+                      {isResearching ? "Researching..." : "Thinking..."}
                     </span>
                   </div>
                 </div>
@@ -461,6 +499,33 @@ export default function Home() {
             </div>
           )}
 
+          <div className="flex items-center mb-2">
+            <button
+              type="button"
+              onClick={toggleResearchMode}
+              className={`px-3 py-1 rounded-lg mr-2 flex items-center gap-1 text-sm ${
+                isResearchMode
+                  ? "bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300"
+                  : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+              }`}
+            >
+              {isResearchMode ? (
+                <>
+                  <Search className="h-4 w-4" /> Research Mode
+                </>
+              ) : (
+                <>
+                  <Lightbulb className="h-4 w-4" /> Assistant Mode
+                </>
+              )}
+            </button>
+            {isResearchMode && (
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                Using Perplexity for in-depth research
+              </span>
+            )}
+          </div>
+
           <form onSubmit={handleSubmit} className="flex items-center gap-2">
             <input
               type="text"
@@ -468,10 +533,16 @@ export default function Home() {
               onChange={(e) => setPrompt(e.target.value)}
               placeholder={
                 isConnected
-                  ? "What would you like me to do on your desktop?"
+                  ? isResearchMode
+                    ? "What topic would you like me to research?"
+                    : "What would you like me to do on your desktop?"
                   : "Connect to desktop client first..."
               }
-              className="flex-grow px-4 py-3 bg-slate-100 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 text-slate-900 dark:text-white"
+              className={`flex-grow px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 text-slate-900 dark:text-white ${
+                isResearchMode
+                  ? "bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800 focus:ring-purple-500"
+                  : "bg-slate-100 dark:bg-slate-700 border-slate-300 dark:border-slate-600 focus:ring-blue-500"
+              }`}
               disabled={!isConnected || isLoading}
             />
 
@@ -495,7 +566,11 @@ export default function Home() {
             <button
               type="submit"
               disabled={!isConnected || !prompt.trim() || isLoading}
-              className="p-3 rounded-full bg-blue-600 dark:bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-700 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className={`p-3 rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                isResearchMode
+                  ? "bg-purple-600 dark:bg-purple-700 hover:bg-purple-700 dark:hover:bg-purple-600"
+                  : "bg-blue-600 dark:bg-blue-600 hover:bg-blue-700 dark:hover:bg-blue-700"
+              }`}
             >
               {isLoading ? (
                 <Loader2 className="h-5 w-5 animate-spin" />

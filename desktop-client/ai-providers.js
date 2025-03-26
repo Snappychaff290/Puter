@@ -1,6 +1,7 @@
 // desktop-client/ai-providers.js
 const fetch = require("node-fetch");
 const CONFIG = require("./config");
+const PerplexityProvider = require("./perplexity-provider");
 
 class GeminiProvider {
   constructor(apiKey) {
@@ -96,6 +97,8 @@ function getAIProvider(provider) {
       return new GeminiProvider();
     case "ollama":
       return new OllamaProvider();
+    case "perplexity":
+      return new PerplexityProvider();
     default:
       throw new Error(`Unknown AI provider: ${provider}`);
   }
@@ -104,5 +107,6 @@ function getAIProvider(provider) {
 module.exports = {
   GeminiProvider,
   OllamaProvider,
+  PerplexityProvider,
   getAIProvider,
 };

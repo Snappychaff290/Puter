@@ -1,17 +1,19 @@
 {
   "name": "ai-desktop-assistant-client",
   "version": "1.0.0",
-  "description": "Desktop client for AI Desktop Assistant",
-  "main": "index.js",
+  "description": "Desktop client for AI Desktop Assistant with markdown viewer",
+  "main": "app.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node app.js",
+    "dev": "nodemon app.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.18.2",
-    "fs-extra": "^11.1.1",
+    "fs-extra": "^11.3.0",
+    "highlight.js": "^11.8.0",
+    "marked": "^4.3.0",
     "node-fetch": "^2.7.0",
     "node-notifier": "^10.0.1",
     "open": "^8.4.2",
@@ -20,5 +22,10 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
-  }
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "author": "",
+  "license": "MIT"
 }

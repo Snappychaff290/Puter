@@ -7,6 +7,9 @@ const http = require("http");
 const CommandProcessor = require("./command-processor");
 const cors = require("cors");
 const { getAIProvider } = require("./ai-providers");
+const markdownViewerRouter = require("./markdown-viewer");
+const markdownViewer = require("./simplified-markdown-viewer");
+require("dotenv").config();
 
 // Load configuration
 const CONFIG = require("./config");
@@ -208,6 +211,50 @@ wss.on("connection", (ws) => {
             })
           );
         }
+      } else if (parsedMessage.type === "research") {
+        // Send acknowledgment that we received the message
+        ws.send(
+          JSON.stringify({
+            type: "typing",
+            message: "Researching this topic... This might take a moment.",
+          })
+        );
+
+        try {
+          // Process the research request
+          const researchResult = await commandProcessor.research_topic({
+            topic: parsedMessage.topic,
+            saveResults: true,
+          });
+
+          if (!researchResult.success) {
+            throw new Error(researchResult.error);
+          }
+
+          // Send research results to client
+          ws.send(
+            JSON.stringify({
+              type: "research_completed",
+              message: researchResult.message,
+              fileDetails: {
+                type: "research",
+                name: path.basename(researchResult.filePath),
+                path: researchResult.filePath,
+                preview:
+                  researchResult.researchContent.substring(0, 300) +
+                  (researchResult.researchContent.length > 300 ? "..." : ""),
+              },
+            })
+          );
+        } catch (error) {
+          console.error("Error processing research request:", error);
+          ws.send(
+            JSON.stringify({
+              type: "chat_response",
+              message: `I'm sorry, I encountered an error while researching this topic: ${error.message}. Please check if the Perplexity API key is configured correctly.`,
+            })
+          );
+        }
       } else if (parsedMessage.type === "open_file") {
         // Open a file that was created
         try {
@@ -262,7 +309,24 @@ wss.on("connection", (ws) => {
   });
 });
 
+// Make workspace directory available to routes
+app.locals.workspaceDir = CONFIG.workspaceDir;
+
+app.use("/markdown", markdownViewerRouter);
+
 // API routes
+
+app.get("/api/open-file/:filename", async (req, res) => {
+  try {
+    const filePath = path.join(CONFIG.workspaceDir, req.params.filename);
+    const { default: open } = await import("open");
+    await open(filePath);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get("/status", (req, res) => {
   res.json({
     status: "running",
@@ -283,6 +347,12 @@ app.get("/api/config", (req, res) => {
       apiUrl: CONFIG.aiProviders.ollama.apiUrl,
       model: CONFIG.aiProviders.ollama.model,
     },
+    perplexity: {
+      apiKey: CONFIG.aiProviders.perplexity.apiKey
+        ? "configured"
+        : "not configured",
+      model: CONFIG.aiProviders.perplexity.model,
+    },
   });
 });
 
@@ -299,6 +369,15 @@ app.post("/api/config", express.json(), (req, res) => {
       }
       if (req.body.ollama.model) {
         CONFIG.aiProviders.ollama.model = req.body.ollama.model;
+      }
+    }
+
+    if (req.body.perplexity) {
+      if (req.body.perplexity.apiKey) {
+        CONFIG.aiProviders.perplexity.apiKey = req.body.perplexity.apiKey;
+      }
+      if (req.body.perplexity.model) {
+        CONFIG.aiProviders.perplexity.model = req.body.perplexity.model;
       }
     }
 
@@ -354,6 +433,11 @@ app.get("/files", async (req, res) => {
   }
 });
 
+app.get("/view/:filename", (req, res) => {
+  const filename = req.params.filename;
+  res.redirect(`/md-view?filename=${encodeURIComponent(filename)}`);
+});
+
 app.get("/file/:filename", async (req, res) => {
   try {
     const filePath = path.join(CONFIG.workspaceDir, req.params.filename);
@@ -367,6 +451,174 @@ app.get("/file/:filename", async (req, res) => {
 // Serve control panel on root route
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "control-panel.html"));
+});
+
+// List all markdown files
+app.get("/md-files", async (req, res) => {
+  try {
+    const files = await fs.readdir(CONFIG.workspaceDir);
+    const markdownFiles = files.filter(
+      (file) => file.endsWith(".md") || file.endsWith(".markdown")
+    );
+
+    let html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Markdown Files</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            h1 { color: #333; }
+            ul { list-style-type: none; padding: 0; }
+            li { margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+            a { color: #0066cc; text-decoration: none; word-break: break-all; }
+            a:hover { text-decoration: underline; }
+          </style>
+        </head>
+        <body>
+          <h1>Markdown Files</h1>
+          <ul>
+    `;
+
+    for (const file of markdownFiles) {
+      html += `
+        <li>
+          <a href="/md-view?filename=${encodeURIComponent(file)}">${file}</a>
+        </li>
+      `;
+    }
+
+    html += `
+          </ul>
+        </body>
+      </html>
+    `;
+
+    res.send(html);
+  } catch (error) {
+    res.status(500).send(`Error: ${error.message}`);
+  }
+});
+
+// View a markdown file
+app.get("/md-view", async (req, res) => {
+  try {
+    const filename = req.query.filename;
+
+    if (!filename) {
+      return res.status(400).send("No filename provided");
+    }
+
+    const filePath = path.join(CONFIG.workspaceDir, filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send(`File not found: ${filename}`);
+    }
+
+    // Set Content Security Policy header to allow font loading
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; " +
+        "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; " +
+        "font-src 'self' data: https://* *; " +
+        "img-src 'self' data: https://*;"
+    );
+
+    const content = await fs.readFile(filePath, "utf8");
+
+    // Check if marked is available
+    let htmlContent;
+    try {
+      const marked = require("marked");
+      htmlContent = marked.parse(content);
+    } catch (error) {
+      // If marked is not available, use simple HTML formatting
+      htmlContent = content
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\n\n/g, "</p><p>")
+        .replace(/\n/g, "<br>");
+      htmlContent = `<p>${htmlContent}</p>`;
+    }
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>${filename}</title>
+          <style>
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+              max-width: 800px;
+              margin: 0 auto;
+              padding: 20px;
+              line-height: 1.6;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 20px;
+              padding-bottom: 10px;
+              border-bottom: 1px solid #eaecef;
+            }
+            .content {
+              background: #fff;
+              padding: 20px;
+              border-radius: 5px;
+              box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            h1, h2, h3, h4 { color: #333; }
+            pre { 
+              background: #f6f8fa; 
+              padding: 16px; 
+              border-radius: 3px;
+              overflow: auto;
+            }
+            code { font-family: monospace; }
+            blockquote {
+              margin: 0;
+              padding: 0 1em;
+              color: #6a737d;
+              border-left: 0.25em solid #dfe2e5;
+            }
+            a { color: #0366d6; }
+            table {
+              border-collapse: collapse;
+              width: 100%;
+            }
+            table, th, td {
+              border: 1px solid #dfe2e5;
+              padding: 8px;
+            }
+            th {
+              background-color: #f6f8fa;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${filename}</h1>
+            <div>
+              <a href="/md-files">Back to list</a>
+            </div>
+          </div>
+          <div class="content">
+            ${htmlContent}
+          </div>
+        </body>
+      </html>
+    `;
+
+    res.send(html);
+  } catch (error) {
+    res.status(500).send(`Error: ${error.message}`);
+  }
+});
+
+// Redirect to the file list
+app.get("/markdown", (req, res) => {
+  res.redirect("/md-files");
 });
 
 // Start the server
